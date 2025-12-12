@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
 from pathlib import Path
 from copy import copy
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
 
-import shared_functions as sf  # shared_functions.py in Inventory/
+import shared_functions as sf
 
 STYLE_TEMPLATE_ROW = 2  # first data row under headers
 
@@ -76,18 +76,48 @@ def apply_hidden_column_styles_and_hide(ws) -> None:
             continue
 
         if col_idx > max_col:
-            # Column doesn't exist in this sheet
             continue
 
-        # Style source: template row
         src = ws[f"{col_letter}{STYLE_TEMPLATE_ROW}"]
-
         for row in range(2, max_row + 1):
             dst = ws[f"{col_letter}{row}"]
             dst._style = copy(src._style)
 
-        # Hide the column
         ws.column_dimensions[col_letter].hidden = True
+
+
+def apply_hr_row_to_existing(
+    ws_existing,
+    ws_new,
+    src_row: int,
+    dst_row: int,
+    *,
+    existing_max_col: int,
+    new_max_col: int,
+) -> None:
+    """
+    Copy HR values from ws_new[src_row] into ws_existing[dst_row], shifting by +1 column,
+    but do NOT overwrite:
+      - Column I (Loc)
+      - Columns X-AA (In/Out, LOE, Last Scanned, Last Verified)
+
+    Column A is managed separately and is not written here.
+
+    Mapping: new col c -> existing col (c + 1)
+    """
+    max_copy_cols = min(new_max_col, existing_max_col - 1)  # dest is c+1
+
+    # Destination columns to skip by numeric index
+    # I = 9
+    # X..AA = 24..27
+    skip_dest_cols = {9, 24, 25, 26, 27}
+
+    for c in range(1, max_copy_cols + 1):
+        dest_col = c + 1
+        if dest_col in skip_dest_cols:
+            continue
+        val = ws_new.cell(row=src_row, column=c).value
+        ws_existing.cell(row=dst_row, column=dest_col, value=val)
 
 
 def run_import_inventory(root: tk.Misc | None = None):
@@ -102,20 +132,21 @@ def run_import_inventory(root: tk.Misc | None = None):
       1) Try match by (AssetId, Serial).
          - If match:
              * Set existing row's column A = i.
-             * If its old A was 50xxx -> "added from 50xxx".
-             * Else -> "no change".
+             * Overwrite existing row with HR values for all mapped columns
+               EXCEPT: A, I, and X-AA.
       2) If no match by Asset+Serial:
          - Look for a 50xxx row where Serial matches (by normalized serial only).
              * If found:
                  - Use that row:
                      A = i
-                     C (Asset Id) = new Asset Id from HR
-                 - Count as "added from 50xxx".
+                     Overwrite existing row with HR values for all mapped columns
+                     EXCEPT: A, I, and X-AA.
              * Else:
                  - Append new row at bottom:
                      A = i
-                     B.. = new-row columns shifted one to the right
-                 - Count as "brand new" item.
+                     Copy HR values shifted one column to the right,
+                     EXCEPT: I and X-AA (these are left blank).
+                     X-AA are explicitly blanked for brand new items.
 
     After processing all new rows:
       - Any original existing rows with A < 50000 and not matched:
@@ -124,17 +155,16 @@ def run_import_inventory(root: tk.Misc | None = None):
 
       - Sort by column A.
       - Apply hidden-column styling + hide them.
-      - Check for duplicate Asset Ids (by normalized Asset Id).
+      - Check for duplicate Asset Ids (FULL string; ignore N/A and Other Equipment).
       - Save and show summary with counts, lists, and duplicate report.
     """
-    # Ensure root exists
     owns_root = False
     if root is None:
         root = tk.Tk()
         root.withdraw()
         owns_root = True
 
-    # 1) Select existing inventory file
+    # Select existing inventory file
     existing_path_str = sf.select_inventory_excel_file(
         root=root, title="Select EXISTING Inventory Excel File"
     )
@@ -144,7 +174,7 @@ def run_import_inventory(root: tk.Misc | None = None):
         return
     existing_path = Path(existing_path_str)
 
-    # 2) Select new inventory file (HR's updated export)
+    # Select new inventory file (HR export)
     new_path_str = filedialog.askopenfilename(
         parent=root,
         title="Select NEW Inventory Excel File (HR Export)",
@@ -156,47 +186,35 @@ def run_import_inventory(root: tk.Misc | None = None):
         return
     new_path = Path(new_path_str)
 
-    # --- Load existing workbook ---
+    # Load existing workbook
     try:
         wb_existing = load_workbook(existing_path)
     except Exception as e:
-        messagebox.showerror(
-            "Load error",
-            f"Failed to open existing workbook:\n{e}",
-            parent=root,
-        )
+        messagebox.showerror("Load error", f"Failed to open existing workbook:\n{e}", parent=root)
         if owns_root:
             root.destroy()
         return
 
-    ws_existing = wb_existing[wb_existing.sheetnames[0]]  # assume first sheet is inventory
+    ws_existing = wb_existing[wb_existing.sheetnames[0]]
     existing_max_col = ws_existing.max_column
 
-    # --- Load new workbook ---
+    # Load new workbook
     try:
         wb_new = load_workbook(new_path, data_only=True)
     except Exception as e:
-        messagebox.showerror(
-            "Load error",
-            f"Failed to open new (import) workbook:\n{e}",
-            parent=root,
-        )
+        messagebox.showerror("Load error", f"Failed to open new (import) workbook:\n{e}", parent=root)
         if owns_root:
             root.destroy()
         return
 
     ws_new = wb_new[wb_new.sheetnames[0]]
 
-    # Fixed column positions:
-    # Existing: Asset Id = column C (3), Serial = column O (15)
-    # New:      Asset Id = column B (2), Serial = column N (14)
-
     # Build lookup for existing rows by (normalized_asset, normalized_serial)
     existing_map: dict[tuple[str, str], int] = {}
     original_max_row = ws_existing.max_row
-    original_A_values: dict[int, int] = {}  # row -> original A value
+    original_A_values: dict[int, int] = {}
 
-    # Also build a lookup from normalized serial -> 50xxx row (for serial-only match)
+    # Lookup from normalized serial -> 50xxx row (serial-only promotion)
     serial_to_50xxx_row: dict[str, int] = {}
 
     for r in range(2, original_max_row + 1):
@@ -215,27 +233,22 @@ def run_import_inventory(root: tk.Misc | None = None):
         serial_norm = normalize_serial(serial_val)
 
         if asset_norm or serial_norm:
-            key = (asset_norm, serial_norm)
-            existing_map[key] = r
+            existing_map[(asset_norm, serial_norm)] = r
 
-        # Build serial-only map for 50xxx rows
         if a_val is not None and 50000 <= a_val < 51000 and serial_norm:
-            # If multiple rows share serial, last one wins; acceptable for this use.
             serial_to_50xxx_row[serial_norm] = r
 
     matched_existing_rows: set[int] = set()
 
-    # Collect USED 50xxx numbers so we can reuse gaps later
+    # Collect used 50xxx numbers so we can reuse gaps
     used_50xxx: set[int] = set()
     for r, a_val in original_A_values.items():
         if 50000 <= a_val < 51000:
             used_50xxx.add(a_val)
 
-    # starting candidate for "next available 50xxx"
     next_50xxx = 50000
 
     def get_next_50xxx() -> int:
-        """Return the smallest unused 50xxx number and mark it as used."""
         nonlocal next_50xxx
         while next_50xxx in used_50xxx:
             next_50xxx += 1
@@ -244,7 +257,7 @@ def run_import_inventory(root: tk.Misc | None = None):
         next_50xxx += 1
         return value
 
-    # Process new sheet rows
+    # Counts and lists
     matched_regular_count = 0
     added_from_50xxx_count = 0
     brand_new_count = 0
@@ -252,7 +265,7 @@ def run_import_inventory(root: tk.Misc | None = None):
     brand_new_items: list[str] = []
     added_from_50xxx_items: list[str] = []
 
-    import_index = 0  # sequence number for processed new rows
+    import_index = 0
     new_max_row = ws_new.max_row
     new_max_col = ws_new.max_column
 
@@ -263,21 +276,29 @@ def run_import_inventory(root: tk.Misc | None = None):
         asset_norm = sf.normalize(asset_val) if asset_val is not None else ""
         serial_norm = normalize_serial(serial_val)
 
-        # Skip completely blank entries
         if not asset_norm and not serial_norm:
             continue
 
-        import_index += 1  # "4th item looked at" style index
-
+        import_index += 1
         key = (asset_norm, serial_norm)
 
         if key in existing_map:
-            # 1) Exact match by asset+serial
+            # Exact match
             existing_row = existing_map[key]
             old_a = original_A_values.get(existing_row)
 
             ws_existing[f"A{existing_row}"].value = import_index
             matched_existing_rows.add(existing_row)
+
+            # Overwrite with HR values (except A, I, X-AA)
+            apply_hr_row_to_existing(
+                ws_existing,
+                ws_new,
+                src_row=r,
+                dst_row=existing_row,
+                existing_max_col=existing_max_col,
+                new_max_col=new_max_col,
+            )
 
             if old_a is not None and 50000 <= old_a < 51000:
                 added_from_50xxx_count += 1
@@ -289,48 +310,57 @@ def run_import_inventory(root: tk.Misc | None = None):
                 matched_regular_count += 1
 
         else:
-            # 2) No exact match: check 50xxx rows by serial only
+            # No exact match: try serial-only promotion from 50xxx
             serial_row = serial_to_50xxx_row.get(serial_norm)
+
             if serial_row is not None:
-                # Use this 50xxx row, set its A and Asset Id
                 old_a = original_A_values.get(serial_row)
+
                 ws_existing[f"A{serial_row}"].value = import_index
-                ws_existing.cell(row=serial_row, column=3, value=asset_val)  # set Asset Id (C)
                 matched_existing_rows.add(serial_row)
+
+                # Overwrite with HR values (except A, I, X-AA)
+                apply_hr_row_to_existing(
+                    ws_existing,
+                    ws_new,
+                    src_row=r,
+                    dst_row=serial_row,
+                    existing_max_col=existing_max_col,
+                    new_max_col=new_max_col,
+                )
 
                 added_from_50xxx_count += 1
                 added_from_50xxx_items.append(
-                    f"Row {serial_row}: Serial-only match, Asset set to {asset_val!r}, "
-                    f"Serial {serial_val!r} (was {old_a}, now {import_index})"
+                    f"Row {serial_row}: Serial-only match, updated from HR. "
+                    f"Asset {asset_val!r} / Serial {serial_val!r} (was {old_a}, now {import_index})"
                 )
 
             else:
-                # 3) Truly brand new: add a new row at the bottom, shifting columns by +1
+                # Brand new: append row
                 dest_row = ws_existing.max_row + 1
                 brand_new_count += 1
 
-                # --- Clear any existing values in this row (all existing columns) ---
-                # This prevents leftover data if Excel thinks this row was used before.
+                # Clear any existing values in this row
                 for c in range(1, existing_max_col + 1):
                     ws_existing.cell(row=dest_row, column=c, value=None)
 
-                # Style: copy ENTIRE ROW styling from template (all existing columns)
+                # Copy ENTIRE ROW styling from template
                 cols_to_style = [get_column_letter(c) for c in range(1, existing_max_col + 1)]
                 copy_cell_styles(ws_existing, STYLE_TEMPLATE_ROW, dest_row, cols_to_style)
 
-                # Set column A to import_index (sequence from HR import)
                 ws_existing[f"A{dest_row}"].value = import_index
 
-                # Copy values from new sheet row, shifting one column to the right,
-                # but never beyond the existing sheet's last column.
-                max_copy_cols = min(new_max_col, existing_max_col - 1)  # dest is c+1
+                # Apply HR values (except I and X-AA)
+                apply_hr_row_to_existing(
+                    ws_existing,
+                    ws_new,
+                    src_row=r,
+                    dst_row=dest_row,
+                    existing_max_col=existing_max_col,
+                    new_max_col=new_max_col,
+                )
 
-                for c in range(1, max_copy_cols + 1):
-                    val = ws_new.cell(row=r, column=c).value
-                    ws_existing.cell(row=dest_row, column=c + 1, value=val)
-
-                # IMPORTANT: ensure status / scan columns are BLANK for brand-new items
-                # (Promoted 50xxx rows are NOT touched here; this is only for truly new rows.)
+                # Ensure status / scan columns are blank for brand-new items
                 for col_letter in ("X", "Y", "Z", "AA"):
                     ws_existing[f"{col_letter}{dest_row}"].value = ""
 
@@ -338,9 +368,7 @@ def run_import_inventory(root: tk.Misc | None = None):
                     f"Row {dest_row}: Asset {asset_val!r} / Serial {serial_val!r}"
                 )
 
-    # After processing all new rows:
-    # Any ORIGINAL rows (<= original_max_row) with A < 50000 and not matched
-    # get moved to the 50xxx series (using next AVAILABLE 50xxx).
+    # Mark removed-by-HR: original rows with A < 50000 and not matched
     removed_count = 0
     removed_items: list[str] = []
 
@@ -368,52 +396,41 @@ def run_import_inventory(root: tk.Misc | None = None):
     # Sort rows by column A
     sort_worksheet_by_column_a(ws_existing)
 
-    # Apply style + hide for selected columns (including hidden ones)
+    # Apply hidden-column styling + hide them
     apply_hidden_column_styles_and_hide(ws_existing)
 
-    # ---------- Duplicate Asset Id check (FULL asset ID, not normalized) ----------
+    # Duplicate Asset Id check (FULL asset ID, not normalized), ignore N/A and Other Equipment
     dup_groups: list[str] = []
-    asset_map: dict[str, list[int]] = {}  # raw_asset -> [row numbers]
+    asset_map: dict[str, list[int]] = {}
 
     max_row_after = ws_existing.max_row
-
     for r in range(2, max_row_after + 1):
-        raw_asset = ws_existing.cell(row=r, column=3).value  # column C
-
+        raw_asset = ws_existing.cell(row=r, column=3).value  # C
         if raw_asset is None:
             continue
-
         raw_str = str(raw_asset).strip()
-
-        # Ignore blanks, N/A, Other Equipment
         if raw_str == "" or raw_str.upper() == "N/A" or raw_str.lower() == "other equipment":
             continue
-
         asset_map.setdefault(raw_str, []).append(r)
 
-    # Collect duplicates
     for raw_asset, rows in asset_map.items():
         if len(rows) > 1:
             block = (
-                f"Asset ID '{raw_asset}' appears in {len(rows)} rows:\n" +
-                "\n".join(f"    row {r}" for r in rows)
+                f"Asset ID '{raw_asset}' appears in {len(rows)} rows:\n"
+                + "\n".join(f"    row {rr}" for rr in rows)
             )
             dup_groups.append(block)
 
-    # Save and summarize
+    # Save
     try:
         wb_existing.save(existing_path)
     except Exception as e:
-        messagebox.showerror(
-            "Save error",
-            f"Failed to save changes to existing Excel file:\n{e}",
-            parent=root,
-        )
+        messagebox.showerror("Save error", f"Failed to save changes:\n{e}", parent=root)
         if owns_root:
             root.destroy()
         return
 
-    # Summary message
+    # Summary
     summary_lines = [
         "Successfully imported new inventory.",
         "",
@@ -447,9 +464,7 @@ def run_import_inventory(root: tk.Misc | None = None):
         summary_lines.append("")
         summary_lines.append("No duplicate Asset IDs detected (by full Asset Id).")
 
-    summary_msg = "\n".join(summary_lines)
-
-    messagebox.showinfo("Import complete", summary_msg, parent=root)
+    messagebox.showinfo("Import complete", "\n".join(summary_lines), parent=root)
 
     if owns_root:
         root.destroy()
