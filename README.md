@@ -5,17 +5,24 @@ The program uses local copies provided by J4 or local trackers matching the prov
 
 ![FP GUI Screenshot](https://github.com/user-attachments/assets/bfebb532-f8da-470c-919c-09b2358a2a79)
 
-IMPORT - For initial setup, use your J4 HR or manual tabulated local copy and run the import program from the launcher. then use whatever you currently have locally to fill in the SHR information and statuses. SHR information goes into the Location column, see the example on how it is supposed to be.
+IMPORT - For initial setup, use your J4 HR and run the import function from the launcher. Then use your current local copy to fill in the remaining SHR information and statuses. SHR information goes into the Location column (Example Site HR.xlsx located in Examples).
 
-INVENTORY -
+INVENTORY - The Inventory function updates the "Last Scanned" and "Last Verified" columns for existing items on Site HRs. Additionally, this function can be used to track off-the-books or new equipment not yet added to the HR. By scanning or typing the asset tag, the function creates a new entry in the Excel tracker. Off-the-books items will generate a 5#### series ID. 
 
-1150 GENNER -
+1150 GENNER - This function generates 1150s based off existing SHRs under column I "Loc". SHRs in this column must follow the format of "SHR: Name" for the function to properly identify them. 
+
+1. Select the HR excel.
+2. Users will be prompted to select a SHR. To be able to select a SHR, at least one entry in under "Loc" must exist. Users must manually enter the information in the column for at least one item.
+
+![FP Genner SHR Select](https://github.com/user-attachments/assets/5190560b-4588-4223-8e1d-ab7d36c3516b)
+
+3. Users will then be prompted to "Save Filled DD 1150 As." 
+4. Finally, Users will be prompted to input the 1150 issurer and reciepient and select the transaction type from the radial selections.
+
+![FP Genner FROM_TO_TRANSATION](https://github.com/user-attachments/assets/c4aadd0d-04b9-4164-bc38-d0115bd37b1c)
+
+The completed 1150 will be saved in the under the name and location selected in step 3.
 
 SCAN OUT -
 
 SCAN IN -
-
-
--- Add pictures
--- Redo Directory
--- Generate Installer
