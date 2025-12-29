@@ -21,8 +21,10 @@ INVENTORY - The Inventory function updates the "Last Scanned" and "Last Verified
 
 ![FP Genner FROM_TO_TRANSATION](https://github.com/user-attachments/assets/c4aadd0d-04b9-4164-bc38-d0115bd37b1c)
 
-The completed 1150 will be saved in the under the name and location selected in step 3.
+The completed 1150 will be saved under the name and location selected in step 3.
 
-SCAN OUT -
+SCAN OUT - This function allows HR holders to add additional assets to a SHR. Similar to the 1150 Genner function, a SHR must exist by having at least one entry under column I "Loc" and follow the "SHR: Name" naming convention. Users select the SHR they are modifying from the drop down menu at the top. Users can swap between SHRs if they have multiple updates to make. New items or Off-the-books items can also be added and will follow the 5#### series numbering listed under the Inventory section. After scanning/entering an asset, columns I, X, Z, and AA will be updated.
 
-SCAN IN -
+![FP Scan Out](https://github.com/user-attachments/assets/6f495a72-2b20-488a-ab76-48eb86bb2121)
+
+SCAN IN - This function mirrors the functionality of the SCAN OUT function in reverse. This function identifies the physical locations at local Forges where assets will be stored. Similar to the 1150 Genner function, a location must exist by having at least one entry under column I "Loc". Locations do not need to follow the naming convention identified under the INVENTORY and SCAN OUT sections. Users select the location they are modifying from the drop down menu at the top. Users can swap between locations if they have multiple updates to make. New items or Off-the-books items can also be added and will follow the 5#### series numbering listed under the Inventory section. After scanning/entering an asset, columns I, X, Z, and AA will be updated.
