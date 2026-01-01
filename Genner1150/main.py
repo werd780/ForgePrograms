@@ -2,6 +2,7 @@ import pandas as pd
 import tkinter as tk
 import shutil
 import os
+import sys
 import math
 from tkinter import filedialog, messagebox
 from fillpdf import fillpdfs
@@ -131,7 +132,7 @@ def writePDF(file_name, save_path, data_dict):
     save_path: Where to save the file after writing. This is in Temp_Output.
     data_dict: The data dictionary where field names are keys and data is value.
     """
-    Path(destination_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     fillpdfs.write_fillable_pdf(
     input_pdf_path=file_name,
     output_pdf_path=save_path,
