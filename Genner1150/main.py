@@ -2,6 +2,7 @@ import pandas as pd
 import tkinter as tk
 import shutil
 import os
+import sys
 import math
 from tkinter import filedialog, messagebox
 from fillpdf import fillpdfs
@@ -13,6 +14,17 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "Templates"
 TEMP_OUTPUT_DIR = BASE_DIR / "Temp_Output"
+
+def get_output_dir() -> Path:
+    # If running as a PyInstaller exe, write somewhere persistent & writable
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+        out = base / "ForgePrograms" / "Genner1150" / "Temp_Output"
+    else:
+        out = Path(__file__).resolve().parent / "Temp_Output"
+
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 def makeDataDict(filtered_df, page_capacity, from_to_values, selected_value, page_num, max_page_num):
     """
@@ -120,6 +132,7 @@ def writePDF(file_name, save_path, data_dict):
     save_path: Where to save the file after writing. This is in Temp_Output.
     data_dict: The data dictionary where field names are keys and data is value.
     """
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     fillpdfs.write_fillable_pdf(
     input_pdf_path=file_name,
     output_pdf_path=save_path,
@@ -367,4 +380,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
